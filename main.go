@@ -45,6 +45,8 @@ var (
 	location_reflectivity int32
 
 	cameraXTemp, cameraYTemp, cameraZTemp float32
+
+	entities = make(map[TexturedModel][]Entity)
 )
 
 type Light struct {
@@ -154,25 +156,61 @@ func prepare() {
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 }
 
-func render(entity Entity) {
-	texturedModel := entity.model
-	model := texturedModel.rawModel
-	gl.BindVertexArray(model.vaoID)
+func processEntity(entity Entity) {
+	entityModel := entity.model
+	batch, _ := entities[entityModel]
+	if batch != nil{
+		batch = append(batch, entity)
+	} else {
+		var newBatch []Entity
+		newBatch = append(newBatch, entity)
+		entities[entityModel] = newBatch
+	}
+}
+
+func render(sun Light, camera Camera) {
+	prepare()
+	loadLight(sun)
+	loadViewMatrix(camera)
+	renderEntities(entities)
+	entities = make(map[TexturedModel][]Entity)
+}
+
+func renderEntities(entities map[TexturedModel][]Entity) {
+	for model, batch := range entities {
+		prepareTexturedModel(model)
+		for _, entity := range batch {
+			prepareInstance(entity)
+			gl.DrawElements(gl.TRIANGLES, model.rawModel.vertexCount, gl.UNSIGNED_INT, gl.PtrOffset(0))
+
+		}
+		unbindTexturedModel()
+	}
+}
+
+func prepareTexturedModel(model TexturedModel) {
+	rawmodel := model.rawModel
+	gl.BindVertexArray(rawmodel.vaoID)
 	gl.EnableVertexAttribArray(0)
 	gl.EnableVertexAttribArray(1)
 	gl.EnableVertexAttribArray(2)
-
-	transformationMatrix := createTransformationMatrix(entity.position, entity.rotX, entity.rotY, entity.rotZ, entity.scale)
-	gl.UniformMatrix4fv(location_transformationMatrix, 1,false, &transformationMatrix[0])
-
-	texture := texturedModel.texture
+	texture := model.texture
 	loadShineVariables(texture.shineDamper, texture.reflectivity)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, texture.textureID)
+}
 
-	gl.DrawElements(gl.TRIANGLES, model.vertexCount, gl.UNSIGNED_INT, gl.PtrOffset(0))
+func unbindTexturedModel() {
 	gl.DisableVertexAttribArray(0)
 	gl.DisableVertexAttribArray(1)
 	gl.DisableVertexAttribArray(2)
 	gl.BindVertexArray(0)
+}
+
+func prepareInstance(entity Entity) {
+	transformationMatrix := createTransformationMatrix(entity.position, entity.rotX, entity.rotY, entity.rotZ, entity.scale)
+	gl.UniformMatrix4fv(location_transformationMatrix, 1,false, &transformationMatrix[0])
+
 }
 
 var projectionMatrix mgl32.Mat4
@@ -251,7 +289,7 @@ func storeDataInAttributeList(attribnum uint32, coordSize int32, data []float32)
 
 	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
-	gl.VertexAttribPointer(attribnum, coordSize, gl.FLOAT, false, 0, gl.PtrOffset(0))
+	gl.VertexAttribPointer(attribnum, coordSize, gl.FLOAT, false, 0/**(5*4)*/, gl.PtrOffset(0))
 
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)//unbind
 }
@@ -475,13 +513,13 @@ func loadShader(filename string, shaderType uint32) (uint32, error) {
 
 
 func createTransformationMatrix(translation mgl32.Vec3, rx, ry, rz, scale float32) mgl32.Mat4 {
-		matrix := mgl32.Ident4()
-		matrix = matrix.Mul4(mgl32.Translate3D(translation.X(), translation.Y(), translation.Z()))
-		matrix = matrix.Mul4(mgl32.HomogRotate3DX(toRadian(rx)))
-		matrix = matrix.Mul4(mgl32.HomogRotate3DY(toRadian(ry)))
-		matrix = matrix.Mul4(mgl32.HomogRotate3DZ(toRadian(rz)))
-		matrix = matrix.Mul4(mgl32.Scale3D(scale, scale, scale))
-		return matrix
+	matrix := mgl32.Ident4()
+	matrix = matrix.Mul4(mgl32.Translate3D(translation.X(), translation.Y(), translation.Z()))
+	matrix = matrix.Mul4(mgl32.HomogRotate3DX(toRadian(rx)))
+	matrix = matrix.Mul4(mgl32.HomogRotate3DY(toRadian(ry)))
+	matrix = matrix.Mul4(mgl32.HomogRotate3DZ(toRadian(rz)))
+	matrix = matrix.Mul4(mgl32.Scale3D(scale, scale, scale))
+	return matrix
 }
 
 func createViewMatrix(c Camera) mgl32.Mat4 {
@@ -502,6 +540,13 @@ func FPSCounter() {
 		nbFrames = 0
 		lastTime += 1.0
 	}
+}
+
+func makeEntity(objloc , textureLoc string, position mgl32.Vec3, shine, reflectivity float32) Entity{
+	textureID, err := loadTexture(textureLoc)
+	check(err)
+	texturedModel := TexturedModel{loadOBJModel(objloc), ModelTexture{textureID, shine, reflectivity}}
+	return Entity{texturedModel, position, 0,0,0,1}
 }
 
 func main() {
@@ -532,30 +577,27 @@ func main() {
 	gl.CullFace(gl.BACK)
 	createProjectionMatrix()
 
-	model := loadOBJModel("dragon.obj")
-	textureID, err := loadTexture("res/blue_color.png")
-	check(err)
-	texture := ModelTexture{textureID, 10, 1}
-	texturedModel := TexturedModel{model, texture}
+	entity := makeEntity("dragon.obj", "res/blue_color.png", mgl32.Vec3{0, 0, -15}, 10, 1)
 
-	entity := Entity{texturedModel, mgl32.Vec3{0, 0, -15}, 0,0,0,1}
+	entity2 := makeEntity("stall.obj", "res/stallTexture.png", mgl32.Vec3{0, 0, -15}, 1, 0)
+
 
 	light := Light{mgl32.Vec3{0,0,-10}, mgl32.Vec3{1,1,1}}
+
 
 	camera := Camera{mgl32.Vec3{0, 0, 0} , 0, 0, 0}
 
 	for !window.ShouldClose() {
 		entity.increaseRotation(0, 1, 0)
 		camera.move()
-		prepare()
 
-		loadLight(light)
-		loadViewMatrix(camera)
-		render(entity)
+		processEntity(entity2)
+		processEntity(entity)
+
+		render(light, camera)
 
 		glfw.PollEvents()
 		window.SwapBuffers()
 		FPSCounter()
 	}
 }
-//LEFT OFF AT EP 13 4:25
