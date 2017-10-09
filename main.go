@@ -36,14 +36,6 @@ var (
 	vbos []*uint32
 	textures []*uint32
 
-	location_transformationMatrix int32
-	location_projectionMatrix int32
-	location_viewMatrix int32
-	location_lightPosition int32
-	location_lightColour int32
-	location_shineDamper int32
-	location_reflectivity int32
-
 	cameraXTemp, cameraYTemp, cameraZTemp float32
 
 	entities = make(map[TexturedModel][]Entity)
@@ -82,6 +74,7 @@ type RawModel struct {
 
 type Program struct {
 	programID, vertexID, fragmentID uint32
+	uniformLocations map[string]int32
 }
 
 func (c *Camera) move() {
@@ -168,19 +161,19 @@ func processEntity(entity Entity) {
 	}
 }
 
-func render(sun Light, camera Camera) {
+func render(sun Light, camera Camera, program Program) {
 	prepare()
-	loadLight(sun)
-	loadViewMatrix(camera)
-	renderEntities(entities)
+	loadLight(sun, program)
+	loadViewMatrix(camera, program)
+	renderEntities(entities, program)
 	entities = make(map[TexturedModel][]Entity)
 }
 
-func renderEntities(entities map[TexturedModel][]Entity) {
+func renderEntities(entities map[TexturedModel][]Entity, program Program) {
 	for model, batch := range entities {
-		prepareTexturedModel(model)
+		prepareTexturedModel(model, program)
 		for _, entity := range batch {
-			prepareInstance(entity)
+			prepareInstance(entity, program)
 			gl.DrawElements(gl.TRIANGLES, model.rawModel.vertexCount, gl.UNSIGNED_INT, gl.PtrOffset(0))
 
 		}
@@ -188,14 +181,14 @@ func renderEntities(entities map[TexturedModel][]Entity) {
 	}
 }
 
-func prepareTexturedModel(model TexturedModel) {
+func prepareTexturedModel(model TexturedModel, program Program) {
 	rawmodel := model.rawModel
 	gl.BindVertexArray(rawmodel.vaoID)
 	gl.EnableVertexAttribArray(0)
 	gl.EnableVertexAttribArray(1)
 	gl.EnableVertexAttribArray(2)
 	texture := model.texture
-	loadShineVariables(texture.shineDamper, texture.reflectivity)
+	loadShineVariables(texture.shineDamper, texture.reflectivity, program)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, texture.textureID)
 }
@@ -207,18 +200,18 @@ func unbindTexturedModel() {
 	gl.BindVertexArray(0)
 }
 
-func prepareInstance(entity Entity) {
+func prepareInstance(entity Entity, program Program) {
 	transformationMatrix := createTransformationMatrix(entity.position, entity.rotX, entity.rotY, entity.rotZ, entity.scale)
-	gl.UniformMatrix4fv(location_transformationMatrix, 1,false, &transformationMatrix[0])
+	gl.UniformMatrix4fv(program.uniformLocations["location_transformationMatrix"], 1,false, &transformationMatrix[0])
 
 }
 
 var projectionMatrix mgl32.Mat4
-func createProjectionMatrix() {
+func createProjectionMatrix(program Program) {
 	projectionMatrix = mgl32.Ident4()
 	aspectRatio := float32(WIDTH)/HEIGHT
 	projectionMatrix = mgl32.Perspective(mgl32.DegToRad(FOV), aspectRatio, NEAR_PLANE, FAR_PLANE)
-	gl.UniformMatrix4fv(location_projectionMatrix, 1,false, &projectionMatrix[0])
+	gl.UniformMatrix4fv(program.uniformLocations["location_projectionMatrix"], 1,false, &projectionMatrix[0])
 }
 
 func loadToVAO(positions, textureCoords, normals []float32, indices []int) RawModel {
@@ -430,38 +423,38 @@ func cleanUpProgram(prog Program) {
 	gl.DeleteProgram(prog.programID)
 }
 
-func loadViewMatrix(c Camera) {
+func loadViewMatrix(c Camera, program Program) {
 	matrix := createViewMatrix(c)
-	gl.UniformMatrix4fv(location_viewMatrix, 1,false, &matrix[0])
+	gl.UniformMatrix4fv(program.uniformLocations["location_viewMatrix"], 1,false, &matrix[0])
 }
 
-func loadShineVariables(damper, reflectivity float32) {
-	gl.Uniform1f(location_shineDamper, damper)
-	gl.Uniform1f(location_reflectivity, reflectivity)
+func loadShineVariables(damper, reflectivity float32, program Program) {
+	gl.Uniform1f(program.uniformLocations["location_shineDamper"], damper)
+	gl.Uniform1f(program.uniformLocations["location_reflectivity"], reflectivity)
 }
 
-func loadLight(light Light) {
-	gl.Uniform3f(location_lightColour, light.colour.X(), light.colour.Y(), light.colour.Z())
-	gl.Uniform3f(location_lightPosition, light.position.X(), light.position.Y(), light.position.Z())
+func loadLight(light Light, program Program) {
+	gl.Uniform3f(program.uniformLocations["location_lightColour"], light.colour.X(), light.colour.Y(), light.colour.Z())
+	gl.Uniform3f(program.uniformLocations["location_lightPosition"], light.position.X(), light.position.Y(), light.position.Z())
 }
 
-func getAllUniformLocations(programID uint32) {
-	location_transformationMatrix = gl.GetUniformLocation(programID, gl.Str("transformationMatrix\x00"))
-	location_projectionMatrix = gl.GetUniformLocation(programID, gl.Str("projectionMatrix\x00"))
-	location_viewMatrix = gl.GetUniformLocation(programID, gl.Str("viewMatrix\x00"))
-	location_lightPosition = gl.GetUniformLocation(programID, gl.Str("lightPosition\x00"))
-	location_lightColour = gl.GetUniformLocation(programID, gl.Str("lightColour\x00"))
-	location_shineDamper = gl.GetUniformLocation(programID, gl.Str("shineDamper\x00"))
-	location_reflectivity = gl.GetUniformLocation(programID, gl.Str("reflectivity\x00"))
+func getAllUniformLocations(program Program) {
+	program.uniformLocations["location_transformationMatrix"] = gl.GetUniformLocation(program.programID, gl.Str("transformationMatrix\x00"))
+	program.uniformLocations["location_projectionMatrix"] = gl.GetUniformLocation(program.programID, gl.Str("projectionMatrix\x00"))
+	program.uniformLocations["location_viewMatrix"] = gl.GetUniformLocation(program.programID, gl.Str("viewMatrix\x00"))
+	program.uniformLocations["location_lightPosition"] = gl.GetUniformLocation(program.programID, gl.Str("lightPosition\x00"))
+	program.uniformLocations["location_lightColour"] = gl.GetUniformLocation(program.programID, gl.Str("lightColour\x00"))
+	program.uniformLocations["location_shineDamper"] = gl.GetUniformLocation(program.programID, gl.Str("shineDamper\x00"))
+	program.uniformLocations["location_reflectivity"] = gl.GetUniformLocation(program.programID, gl.Str("reflectivity\x00"))
 }
 
-func bindAttributes(program uint32) {
-	gl.BindAttribLocation(program, 0, gl.Str("position\x00"))
-	gl.BindAttribLocation(program, 1, gl.Str("textureCoords\x00"))
-	gl.BindAttribLocation(program, 2, gl.Str("normal\x00"))
+func bindAttributes(program Program) {
+	gl.BindAttribLocation(program.programID, 0, gl.Str("position\x00"))
+	gl.BindAttribLocation(program.programID, 1, gl.Str("textureCoords\x00"))
+	gl.BindAttribLocation(program.programID, 2, gl.Str("normal\x00"))
 }
 
-func newProgram(vert, frag string, bindAttributes, getAllUniformLocations func(uint32)) (Program, error) { // function is to replace bindAttributes once use of multiple shaders
+func newProgram(vert, frag string, bindAttributes, getAllUniformLocations func(Program)) (Program, error) {
 	vertexID, err := loadShader(vert, gl.VERTEX_SHADER)
 	if err != nil {
 		return Program{}, err
@@ -476,14 +469,16 @@ func newProgram(vert, frag string, bindAttributes, getAllUniformLocations func(u
 	gl.AttachShader(programID, vertexID)
 	gl.AttachShader(programID, fragID)
 
-	bindAttributes(programID)
+	program := Program{programID,  vertexID, fragID, make(map[string]int32)}
+
+	bindAttributes(program)
 
 	gl.LinkProgram(programID)
 	gl.ValidateProgram(programID)
 
-	getAllUniformLocations(programID)
+	getAllUniformLocations(program)
 
-	return Program{programID, vertexID, fragID}, nil
+	return program, nil
 }
 
 func loadShader(filename string, shaderType uint32) (uint32, error) {
@@ -510,7 +505,6 @@ func loadShader(filename string, shaderType uint32) (uint32, error) {
 
 	return shader, nil
 }
-
 
 func createTransformationMatrix(translation mgl32.Vec3, rx, ry, rz, scale float32) mgl32.Mat4 {
 	matrix := mgl32.Ident4()
@@ -575,15 +569,13 @@ func main() {
 
 	gl.Enable(gl.CULL_FACE)
 	gl.CullFace(gl.BACK)
-	createProjectionMatrix()
+	createProjectionMatrix(program)
 
 	entity := makeEntity("dragon.obj", "res/blue_color.png", mgl32.Vec3{0, 0, -15}, 10, 1)
 
 	entity2 := makeEntity("stall.obj", "res/stallTexture.png", mgl32.Vec3{0, 0, -15}, 1, 0)
 
-
 	light := Light{mgl32.Vec3{0,0,-10}, mgl32.Vec3{1,1,1}}
-
 
 	camera := Camera{mgl32.Vec3{0, 0, 0} , 0, 0, 0}
 
@@ -594,7 +586,7 @@ func main() {
 		processEntity(entity2)
 		processEntity(entity)
 
-		render(light, camera)
+		render(light, camera, program)
 
 		glfw.PollEvents()
 		window.SwapBuffers()
